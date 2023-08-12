@@ -14,7 +14,7 @@ fn get_fields_from_derive_input(st: &syn::DeriveInput) -> syn::Result<&StructFie
 pub(crate) fn generate(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = get_fields_from_derive_input(st)?;
 
-    let idents: Vec<_> = fields.iter().map(|f| &f.ident).collect();
+    let idents: Vec<_> = fields.iter().map(|field| &field.ident).collect();
     let types: Vec<_> = fields.iter().map(|field| &field.ty).collect();
 
     Ok(quote::quote!(
@@ -37,5 +37,27 @@ pub(crate) fn generate_builder_method_fields(st: &syn::DeriveInput) -> syn::Resu
 
     Ok(quote::quote!(
         #(#builder_clauses),*
+    ))
+}
+
+pub(crate) fn generate_builder_setter_methods(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let fields = get_fields_from_derive_input(st)?;
+
+    let build_setter_methods: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let ident = &field.ident;
+            let r#type = &field.ty;
+            quote::quote!(
+                fn #ident(&mut self, #ident: #r#type) -> &mut Self {
+                    self.#ident = std::option::Option::Some(#ident);
+                    self
+                }
+            )
+        })
+        .collect();
+
+    Ok(quote::quote!(
+        #(#build_setter_methods)*
     ))
 }

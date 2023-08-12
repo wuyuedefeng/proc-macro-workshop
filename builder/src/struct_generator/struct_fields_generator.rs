@@ -30,7 +30,7 @@ fn get_generic_inner_type<'a>(r#type: &'a syn::Type, outer_ident_name: &str) -> 
     None
 }
 
-fn get_field_macro_attr_path_value(field: &syn::Field, attr_path: &str) -> Option<syn::Ident> {
+fn get_field_macro_attr_path_value(field: &syn::Field, attr_path: &str, allowed_outer_ident_names: Option<Vec<&str>>) -> syn::Result<Option<syn::Ident>> {
     for attr in &field.attrs {
         if let syn::Meta::List(list) = &attr.meta {
             if let Some(p) = list.path.segments.first() {
@@ -42,7 +42,18 @@ fn get_field_macro_attr_path_value(field: &syn::Field, attr_path: &str) -> Optio
                                 match &kv.value {
                                     syn::Expr::Lit(expr) => {
                                         if let syn::Lit::Str(ref ident_str) = expr.lit {
-                                            return Some(syn::Ident::new(ident_str.value().as_str(), field.span()));
+                                            return Ok(Some(syn::Ident::new(ident_str.value().as_str(), field.span())));
+                                        }
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            if let Some(ref allowed_outer_ident_names) = allowed_outer_ident_names {
+                                match kv.path.get_ident() {
+                                    Some(kv_path_ident) => {
+                                        let kv_path_name = kv_path_ident.to_string();
+                                        if allowed_outer_ident_names.iter().find(|allowed_name| *allowed_name == &kv_path_name).is_none() {
+                                            return Err(syn::Error::new_spanned(&list, format!(r#"expected `builder({} = "...")`"#, allowed_outer_ident_names.join("|"))));
                                         }
                                     }
                                     _ => (),
@@ -54,7 +65,7 @@ fn get_field_macro_attr_path_value(field: &syn::Field, attr_path: &str) -> Optio
             }
         }
     }
-    None
+    Ok(None)
 }
 
 pub(crate) fn generate(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -66,7 +77,7 @@ pub(crate) fn generate(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenS
         let r#type = &field.ty;
         if let Some(inner_type) = get_generic_inner_type(r#type, "Option") {
             types.push(quote::quote!(std::option::Option<#inner_type>))
-        } else if let Some(_) = get_field_macro_attr_path_value(field, "each") {
+        } else if let Some(_) = get_field_macro_attr_path_value(field, "each", Some(vec!["each"]))? {
             if let Some(_) = get_generic_inner_type(r#type, "Vec") {
                 types.push(quote::quote!(#r#type))
             } else {
@@ -89,7 +100,7 @@ pub(crate) fn generate_builder_method_fields(st: &syn::DeriveInput) -> syn::Resu
     for field in fields.iter() {
         let ident = &field.ident;
         let r#type = &field.ty;
-        if let Some(_) = get_field_macro_attr_path_value(field, "each") {
+        if let Some(_) = get_field_macro_attr_path_value(field, "each", Some(vec!["each"]))? {
             if let Some(_) = get_generic_inner_type(r#type, "Vec") {
                 builder_clauses.push(quote::quote!(
                     #ident: std::vec::Vec::new(),
@@ -124,7 +135,7 @@ pub(crate) fn generate_builder_setter_methods(st: &syn::DeriveInput) -> syn::Res
                     self
                 }
             ))
-        } else if let Some(ref user_ident) = get_field_macro_attr_path_value(field, "each") {
+        } else if let Some(ref user_ident) = get_field_macro_attr_path_value(field, "each", Some(vec!["each"]))? {
             if let Some(inner_type) = get_generic_inner_type(r#type, "Vec") {
                 let mut token_stream = proc_macro2::TokenStream::new();
                 token_stream.extend(quote::quote!(
@@ -163,41 +174,34 @@ pub(crate) fn generate_builder_setter_methods(st: &syn::DeriveInput) -> syn::Res
 pub(crate) fn generate_builder_build_method(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = get_fields_from_derive_input(st)?;
 
-    let build_validate_pieces: Vec<_> = fields
-        .iter()
-        .filter_map(|field| {
-            let ident = &field.ident;
-            let r#type = &field.ty;
-            if get_generic_inner_type(r#type, "Option").is_some() || get_field_macro_attr_path_value(field, "each").is_some() {
-                None
-            } else {
-                Some(quote::quote!(
-                    if self.#ident.is_none() {
-                        let err = format!("{} field is missing", stringify!(#ident));
-                        return std::result::Result::Err(err.into());
-                    }
-                ))
-            }
-        })
-        .collect();
+    let mut build_validate_pieces = vec![];
+    for field in fields.iter() {
+        let ident = &field.ident;
+        let r#type = &field.ty;
+        if get_generic_inner_type(r#type, "Option").is_none() && get_field_macro_attr_path_value(field, "each", Some(vec!["each"]))?.is_none() {
+            build_validate_pieces.push(quote::quote!(
+                if self.#ident.is_none() {
+                    let err = format!("{} field is missing", stringify!(#ident));
+                    return std::result::Result::Err(err.into());
+                }
+            ))
+        }
+    }
 
-    let build_assign_pieces: Vec<_> = fields
-        .iter()
-        .map(|field| {
-            let ident = &field.ident;
-            let r#type = &field.ty;
-
-            if get_generic_inner_type(r#type, "Option").is_some() || get_field_macro_attr_path_value(field, "each").is_some() {
-                quote::quote!(
-                    #ident: self.#ident.clone(),
-                )
-            } else {
-                quote::quote!(
-                    #ident: self.#ident.clone().unwrap(),
-                )
-            }
-        })
-        .collect();
+    let mut build_assign_pieces = vec![];
+    for field in fields.iter() {
+        let ident = &field.ident;
+        let r#type = &field.ty;
+        if get_generic_inner_type(r#type, "Option").is_some() || get_field_macro_attr_path_value(field, "each", Some(vec!["each"]))?.is_some() {
+            build_assign_pieces.push(quote::quote!(
+                #ident: self.#ident.clone(),
+            ));
+        } else {
+            build_assign_pieces.push(quote::quote!(
+                #ident: self.#ident.clone().unwrap(),
+            ));
+        }
+    }
 
     let struct_ident = &st.ident;
     Ok(quote::quote!(

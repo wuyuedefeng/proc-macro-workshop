@@ -11,14 +11,39 @@ fn get_fields_from_derive_input(st: &syn::DeriveInput) -> syn::Result<&StructFie
     }
 }
 
+fn get_optional_inner_type(r#type: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(syn::TypePath { path: syn::Path { segments, .. }, .. }) = r#type {
+        if let Some(seg) = segments.last() {
+            if seg.ident.to_string() == "Option" {
+                if let syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }) = &seg.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_type)) = args.first() {
+                        return Some(inner_type);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn generate(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = get_fields_from_derive_input(st)?;
 
     let idents: Vec<_> = fields.iter().map(|field| &field.ident).collect();
-    let types: Vec<_> = fields.iter().map(|field| &field.ty).collect();
+    let types: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let r#type = &field.ty;
+            if let Some(inner_type) = get_optional_inner_type(r#type) {
+                quote::quote!(std::option::Option<#inner_type>)
+            } else {
+                quote::quote!(std::option::Option<#r#type>)
+            }
+        })
+        .collect();
 
     Ok(quote::quote!(
-        #(#idents: std::option::Option<#types>),*
+        #(#idents: #types),*
     ))
 }
 
@@ -48,12 +73,21 @@ pub(crate) fn generate_builder_setter_methods(st: &syn::DeriveInput) -> syn::Res
         .map(|field| {
             let ident = &field.ident;
             let r#type = &field.ty;
-            quote::quote!(
-                fn #ident(&mut self, #ident: #r#type) -> &mut Self {
-                    self.#ident = std::option::Option::Some(#ident);
-                    self
-                }
-            )
+            if let Some(inner_type) = get_optional_inner_type(r#type) {
+                quote::quote!(
+                    fn #ident(&mut self, #ident: #inner_type) -> &mut Self {
+                        self.#ident = std::option::Option::Some(#ident);
+                        self
+                    }
+                )
+            } else {
+                quote::quote!(
+                    fn #ident(&mut self, #ident: #r#type) -> &mut Self {
+                        self.#ident = std::option::Option::Some(#ident);
+                        self
+                    }
+                )
+            }
         })
         .collect();
 
@@ -67,15 +101,19 @@ pub(crate) fn generate_builder_build_method(st: &syn::DeriveInput) -> syn::Resul
 
     let build_validate_pieces: Vec<_> = fields
         .iter()
-        .map(|field| {
+        .filter_map(|field| {
             let ident = &field.ident;
-            // let r#type = &field.ty;
-            quote::quote!(
-                if self.#ident.is_none() {
-                    let err = format!("{} field is missing", stringify!(#ident));
-                    return std::result::Result::Err(err.into());
-                }
-            )
+            let r#type = &field.ty;
+            if let Some(_) = get_optional_inner_type(r#type) {
+                None
+            } else {
+                Some(quote::quote!(
+                    if self.#ident.is_none() {
+                        let err = format!("{} field is missing", stringify!(#ident));
+                        return std::result::Result::Err(err.into());
+                    }
+                ))
+            }
         })
         .collect();
 
@@ -83,10 +121,17 @@ pub(crate) fn generate_builder_build_method(st: &syn::DeriveInput) -> syn::Resul
         .iter()
         .map(|field| {
             let ident = &field.ident;
-            // let r#type = &field.ty;
-            quote::quote!(
-                #ident: self.#ident.clone().unwrap(),
-            )
+            let r#type = &field.ty;
+
+            if let Some(_) = get_optional_inner_type(r#type) {
+                quote::quote!(
+                    #ident: self.#ident.clone(),
+                )
+            } else {
+                quote::quote!(
+                    #ident: self.#ident.clone().unwrap(),
+                )
+            }
         })
         .collect();
 

@@ -61,3 +61,44 @@ pub(crate) fn generate_builder_setter_methods(st: &syn::DeriveInput) -> syn::Res
         #(#build_setter_methods)*
     ))
 }
+
+pub(crate) fn generate_builder_build_method(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let fields = get_fields_from_derive_input(st)?;
+
+    let build_validate_pieces: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let ident = &field.ident;
+            // let r#type = &field.ty;
+            quote::quote!(
+                if self.#ident.is_none() {
+                    let err = format!("{} field is missing", stringify!(#ident));
+                    return std::result::Result::Err(err.into());
+                }
+            )
+        })
+        .collect();
+
+    let build_assign_pieces: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let ident = &field.ident;
+            // let r#type = &field.ty;
+            quote::quote!(
+                #ident: self.#ident.clone().unwrap(),
+            )
+        })
+        .collect();
+
+    let struct_ident = &st.ident;
+    Ok(quote::quote!(
+        pub fn build(&mut self) -> std::result::Result<#struct_ident, std::boxed::Box<dyn std::error::Error>> {
+            #(#build_validate_pieces)*
+
+            let ret = #struct_ident {
+                #(#build_assign_pieces)*
+            };
+            std::result::Result::Ok(ret)
+        }
+    ))
+}

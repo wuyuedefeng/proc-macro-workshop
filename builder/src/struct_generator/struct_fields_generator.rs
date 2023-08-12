@@ -1,6 +1,6 @@
 use std::vec;
 
-use syn::spanned::Spanned;
+use syn::{parse::Parser, spanned::Spanned};
 
 type StructFields = syn::punctuated::Punctuated<syn::Field, syn::Token![,]>;
 fn get_fields_from_derive_input(st: &syn::DeriveInput) -> syn::Result<&StructFields> {
@@ -31,33 +31,30 @@ fn get_generic_inner_type<'a>(r#type: &'a syn::Type, outer_ident_name: &str) -> 
 }
 
 fn get_field_macro_attr_path_value(field: &syn::Field, attr_path: &str) -> Option<syn::Ident> {
-    let mut ident = None;
     for attr in &field.attrs {
         if let syn::Meta::List(list) = &attr.meta {
             if let Some(p) = list.path.segments.first() {
                 if p.ident == "builder" {
-                    // let attr = attr.clone();
-                    let _ = list.parse_nested_meta(|nested_meta| {
-                        if nested_meta.path.is_ident(attr_path) {
-                            let expr: syn::Expr = nested_meta.value()?.parse()?;
-                            match expr {
-                                syn::Expr::Lit(expr) => {
-                                    if let syn::Lit::Str(ref ident_str) = expr.lit {
-                                        ident = Some(syn::Ident::new(ident_str.value().as_str(), field.span()));
+                    let nested_metas = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated.parse2(list.tokens.clone()).unwrap();
+                    for nested_meta in nested_metas.iter() {
+                        if let syn::Meta::NameValue(kv) = nested_meta {
+                            if kv.path.is_ident(attr_path) {
+                                match &kv.value {
+                                    syn::Expr::Lit(expr) => {
+                                        if let syn::Lit::Str(ref ident_str) = expr.lit {
+                                            return Some(syn::Ident::new(ident_str.value().as_str(), field.span()));
+                                        }
                                     }
+                                    _ => (),
                                 }
-                                _ => (),
                             }
-                            Ok(())
-                        } else {
-                            Err(syn::Error::new(field.span(), "not support"))
                         }
-                    });
+                    }
                 }
             }
         }
     }
-    ident
+    None
 }
 
 pub(crate) fn generate(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {

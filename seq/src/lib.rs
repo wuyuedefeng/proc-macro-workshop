@@ -42,7 +42,8 @@ impl SeqParser {
         let token_tree_vec = ts.clone().into_iter().collect::<Vec<_>>();
         let mut ret = proc_macro2::TokenStream::new();
 
-        for idx in 0..token_tree_vec.len() {
+        let mut idx = 0;
+        while idx < token_tree_vec.len() {
             let token_tree = &token_tree_vec[idx];
             match token_tree {
                 proc_macro2::TokenTree::Group(group) => {
@@ -50,8 +51,24 @@ impl SeqParser {
                     let wrap_in_group = proc_macro2::Group::new(group.delimiter(), new_stream);
                     ret.extend(quote::quote!(#wrap_in_group));
                 }
-                proc_macro2::TokenTree::Ident(ident) => {
-                    if ident == &self.variable_ident {
+                proc_macro2::TokenTree::Ident(prefix) => {
+                    if idx + 2 < token_tree_vec.len() {
+                        if let proc_macro2::TokenTree::Punct(p) = &token_tree_vec[idx + 1] {
+                            if p.as_char() == '~' {
+                                if let proc_macro2::TokenTree::Ident(i) = &token_tree_vec[idx + 2] {
+                                    if i == &self.variable_ident && prefix.span().end() == p.span().start() && p.span().end() == i.span().start() {
+                                        let new_ident_literal = format!("{}{}", prefix.to_string(), n);
+                                        let new_ident = proc_macro2::Ident::new(&new_ident_literal, prefix.span());
+                                        ret.extend(quote::quote!(#new_ident));
+                                        idx += 3;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if prefix == &self.variable_ident {
                         let new_ident = proc_macro2::Literal::i64_unsuffixed(n as i64);
                         ret.extend(quote::quote!(#new_ident));
                     } else {
@@ -60,6 +77,7 @@ impl SeqParser {
                 }
                 _ => ret.extend(quote::quote!(#token_tree)),
             }
+            idx += 1;
         }
 
         ret

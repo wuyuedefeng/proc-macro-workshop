@@ -2,7 +2,7 @@ mod common;
 
 use proc_macro::TokenStream;
 
-#[proc_macro_derive(CustomDebug)]
+#[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let st = syn::parse_macro_input!(input as syn::DeriveInput);
     match do_expand(&st) {
@@ -24,8 +24,14 @@ fn generate_debug_trait(st: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
     for field in fields.iter() {
         let ident = &field.ident;
         // let r#type = &field.ty;
+
+        let mut format_string = String::from("{:?}");
+        if let Some(format) = common::get_field_macro_attr_path_value_string(field, "debug", Some(vec!["debug"]))? {
+            format_string = format.to_string();
+        }
+
         debug_body_stream.extend(quote::quote!(
-            .field(stringify!(#ident), &self.#ident)
+            .field(stringify!(#ident), &format_args!(#format_string, &self.#ident))
         ));
     }
     debug_body_stream.extend(quote::quote!(

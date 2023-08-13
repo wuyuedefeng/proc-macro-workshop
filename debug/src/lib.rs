@@ -15,11 +15,10 @@ fn do_expand(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     Ok(generate_debug_trait(st)?)
 }
 
-fn generate_debug_trait(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+fn generate_debug_trait_body(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let struct_name_ident = &st.ident;
-    let fields = common::get_fields_from_derive_input(st)?;
-
     let mut debug_body_stream = proc_macro2::TokenStream::new();
+    let fields = common::get_fields_from_derive_input(st)?;
     debug_body_stream.extend(quote::quote!(fmt.debug_struct(stringify!(#struct_name_ident))));
     for field in fields.iter() {
         let ident = &field.ident;
@@ -37,9 +36,23 @@ fn generate_debug_trait(st: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
     debug_body_stream.extend(quote::quote!(
         .finish()
     ));
+    Ok(debug_body_stream)
+}
+
+fn generate_debug_trait(st: &syn::DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let struct_name_ident = &st.ident;
+    let debug_body_stream = generate_debug_trait_body(st)?;
+
+    let mut generics = st.generics.clone();
+    for generic in generics.params.iter_mut() {
+        if let syn::GenericParam::Type(r#type) = generic {
+            r#type.bounds.push(syn::parse_quote!(std::fmt::Debug));
+        }
+    }
+    let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
 
     Ok(quote::quote!(
-        impl std::fmt::Debug for #struct_name_ident {
+        impl #impl_generics std::fmt::Debug for #struct_name_ident #type_generics #where_clause {
             fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
                 #debug_body_stream
             }

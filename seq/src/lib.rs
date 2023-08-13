@@ -4,7 +4,11 @@ use proc_macro::TokenStream;
 pub fn seq(input: TokenStream) -> TokenStream {
     let st = syn::parse_macro_input!(input as SeqParser);
 
-    return TokenStream::new();
+    let mut ret = proc_macro2::TokenStream::new();
+    for i in st.start..st.end {
+        ret.extend(st.expand(&st.body, i));
+    }
+    ret.into()
 }
 
 struct SeqParser {
@@ -30,5 +34,34 @@ impl syn::parse::Parse for SeqParser {
             end: end.base10_parse()?,
             body,
         })
+    }
+}
+
+impl SeqParser {
+    fn expand(&self, ts: &proc_macro2::TokenStream, n: isize) -> proc_macro2::TokenStream {
+        let token_tree_vec = ts.clone().into_iter().collect::<Vec<_>>();
+        let mut ret = proc_macro2::TokenStream::new();
+
+        for idx in 0..token_tree_vec.len() {
+            let token_tree = &token_tree_vec[idx];
+            match token_tree {
+                proc_macro2::TokenTree::Group(group) => {
+                    let new_stream = self.expand(&group.stream(), n);
+                    let wrap_in_group = proc_macro2::Group::new(group.delimiter(), new_stream);
+                    ret.extend(quote::quote!(#wrap_in_group));
+                }
+                proc_macro2::TokenTree::Ident(ident) => {
+                    if ident == &self.variable_ident {
+                        let new_ident = proc_macro2::Literal::i64_unsuffixed(n as i64);
+                        ret.extend(quote::quote!(#new_ident));
+                    } else {
+                        ret.extend(quote::quote!(#token_tree));
+                    }
+                }
+                _ => ret.extend(quote::quote!(#token_tree)),
+            }
+        }
+
+        ret
     }
 }

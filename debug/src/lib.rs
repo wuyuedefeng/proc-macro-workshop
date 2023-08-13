@@ -1,4 +1,5 @@
 mod common;
+mod visitors;
 
 use std::vec;
 
@@ -56,6 +57,8 @@ fn generate_debug_trait(st: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
             field_type_names.push(s);
         }
     }
+    // 第七关
+    let associated_type_names = common::get_generic_associated_type(st);
 
     let mut generics = st.generics.clone();
     for generic in generics.params.iter_mut() {
@@ -64,10 +67,23 @@ fn generate_debug_trait(st: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
             if phantom_data_type_names.contains(&type_name) && !field_type_names.contains(&type_name) {
                 continue;
             }
+            // 第七关
+            if associated_type_names.contains_key(&type_name) && !field_type_names.contains(&type_name) {
+                continue;
+            }
 
             r#type.bounds.push(syn::parse_quote!(std::fmt::Debug));
         }
     }
+
+    // 第七关
+    let where_clause = generics.make_where_clause();
+    for (_, associated_types) in associated_type_names {
+        for associated_type in associated_types {
+            where_clause.predicates.push(syn::parse_quote!(#associated_type: std::fmt::Debug));
+        }
+    }
+
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
 
     Ok(quote::quote!(

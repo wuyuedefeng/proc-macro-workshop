@@ -1,3 +1,8 @@
+use syn::visit::Visit;
+
+use crate::visitors;
+use std::collections::HashMap;
+
 // use syn::spanned::Spanned;
 type StructFields = syn::punctuated::Punctuated<syn::Field, syn::Token![,]>;
 pub(crate) fn get_fields_from_derive_input(st: &syn::DeriveInput) -> syn::Result<&StructFields> {
@@ -67,4 +72,24 @@ pub(crate) fn get_field_type_name(field: &syn::Field) -> syn::Result<Option<Stri
         }
     }
     Ok(None)
+}
+
+pub(crate) fn get_generic_associated_type(st: &syn::DeriveInput) -> HashMap<String, Vec<syn::TypePath>> {
+    let origin_generic_names: Vec<String> = st
+        .generics
+        .params
+        .iter()
+        .filter_map(|generic| {
+            if let syn::GenericParam::Type(type_param) = generic {
+                return Some(type_param.ident.to_string());
+            }
+            None
+        })
+        .collect();
+    let mut type_path_visitor = visitors::TypePahtVisitor {
+        generic_type_names: origin_generic_names,
+        associated_types: HashMap::new(),
+    };
+    type_path_visitor.visit_derive_input(&st);
+    type_path_visitor.associated_types
 }

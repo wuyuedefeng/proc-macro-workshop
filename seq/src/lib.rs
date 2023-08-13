@@ -29,16 +29,29 @@ impl syn::parse::Parse for SeqParser {
         input.parse::<syn::Token!(in)>()?;
         let start: syn::LitInt = input.parse()?;
         input.parse::<syn::Token!(..)>()?;
+
+        let mut end_inc = false;
+        if input.peek(syn::Token!(=)) {
+            input.parse::<syn::Token!(=)>()?;
+            end_inc = true;
+        }
+
         let end: syn::LitInt = input.parse()?;
         let body_buff;
         syn::braced!(body_buff in input);
         let body: proc_macro2::TokenStream = body_buff.parse()?;
-        Ok(SeqParser {
+        let mut ret = SeqParser {
             variable_ident,
             start: start.base10_parse()?,
             end: end.base10_parse()?,
             body,
-        })
+        };
+
+        if end_inc {
+            ret.end += 1;
+        }
+
+        Ok(ret)
     }
 }
 

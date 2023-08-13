@@ -1,5 +1,7 @@
 mod common;
 
+use std::vec;
+
 use proc_macro::TokenStream;
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -43,9 +45,26 @@ fn generate_debug_trait(st: &syn::DeriveInput) -> syn::Result<proc_macro2::Token
     let struct_name_ident = &st.ident;
     let debug_body_stream = generate_debug_trait_body(st)?;
 
+    let mut phantom_data_type_names = vec![];
+    let mut field_type_names = vec![];
+    let fields = common::get_fields_from_derive_input(st)?;
+    for field in fields.iter() {
+        if let Some(s) = common::get_phantom_data_generic_type_name(field)? {
+            phantom_data_type_names.push(s);
+        }
+        if let Some(s) = common::get_field_type_name(field)? {
+            field_type_names.push(s);
+        }
+    }
+
     let mut generics = st.generics.clone();
     for generic in generics.params.iter_mut() {
         if let syn::GenericParam::Type(r#type) = generic {
+            let type_name = r#type.ident.to_string();
+            if phantom_data_type_names.contains(&type_name) && !field_type_names.contains(&type_name) {
+                continue;
+            }
+
             r#type.bounds.push(syn::parse_quote!(std::fmt::Debug));
         }
     }
